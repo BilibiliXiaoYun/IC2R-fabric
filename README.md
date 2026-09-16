@@ -32,8 +32,6 @@ Known gaps:
   in-game recipe lookup.
 - Save reload and multiplayer sync have not been verified.
 
-See [`docs/HANDOVER.md`](./docs/HANDOVER.md) (Chinese) for the full port state, and
-[`FABRIC_PORT_STATUS.md`](./FABRIC_PORT_STATUS.md) for the progress report.
 
 ## Installing
 
