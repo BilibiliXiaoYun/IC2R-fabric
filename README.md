@@ -1,10 +1,15 @@
-
-# IndustrialCraft 2: Refactored
+# IndustrialCraft 2: Refactored — Fabric port
 
 <img src="https://img.shields.io/badge/Minecraft-1.21.1-brightgreen" alt="Minecraft 1.21.1">
-<img src="https://img.shields.io/badge/NeoForge-21.1.234-orange" alt="NeoForge 21.1.234">
-<img src="https://img.shields.io/badge/Version-21.1.0-blue" alt="Version 21.1.0">
+<img src="https://img.shields.io/badge/Fabric%20Loader-0.16.14-dbd0b4" alt="Fabric Loader 0.16.14">
+<img src="https://img.shields.io/badge/Fabric%20API-0.116.17%2B1.21.1-dbd0b4" alt="Fabric API 0.116.17+1.21.1">
+<img src="https://img.shields.io/badge/Version-21.1.0--fabric.1-blue" alt="Version 21.1.0-fabric.1">
 <img src="https://img.shields.io/badge/License-AGPL--3.0-blue" alt="License AGPL-3.0">
+
+This repository is a **Fabric 1.21.1 port** of [IC2R](https://github.com/neo-industrial-mc/IC2R), the community
+continuation of IC2 originally built on NeoForge. The mod itself — gameplay, values, assets, recipes — is IC2R's
+and is unchanged by the port; only the platform layer was rewritten. See
+[Relationship to upstream](#relationship-to-upstream) for exactly what that means.
 
 This project's code was obtained by decompiling the official build `2.9.40-ex119`, with missing and broken functionality migrated over from `2.8.222-ex112`.
 
@@ -18,9 +23,39 @@ So people stepped up. [IC2CR](https://github.com/yu1745/ic2-fabric) open-sourced
 
 We are different, even with the sword of copyright hanging over our heads. From the very beginning we have had exactly one goal: **bring IC2 to modern Minecraft in its entirety, while changing the original functionality and values as little as possible.**
 
-In the end, we did it. What reached players' hands was a complete, playable IC2 — originally on 1.20.1 Forge, now tracking NeoForge 1.21.1 — and it is still the IC2 you remember.
+In the end, we did it. What reached players' hands was a complete, playable IC2 — originally on 1.20.1 Forge, now tracking NeoForge 1.21.1, and with this repository also Fabric 1.21.1 — and it is still the IC2 you remember.
 
 Yet we never intended to upstage the original. The public discourse around this has been very hostile; I have received malicious attacks and threats. To stress it once more: **we are not IC2's official successors.** We are simply players who love IC2 and want to keep playing it on modern versions.
+
+## Relationship to upstream
+
+[IC2R](https://github.com/neo-industrial-mc/IC2R) is the upstream project and the source of truth for gameplay. This
+repository is a port of it, not a fork with its own design. What changed, and what did not:
+
+| | Upstream IC2R | This repository |
+| --- | --- | --- |
+| Mod loader | NeoForge | **Fabric** (Fabric Loader 0.16.14, Fabric API 0.116.17+1.21.1) |
+| Minecraft | 1.21.1 | 1.21.1 |
+| Gameplay, values, recipes, assets | — | **Unchanged** |
+| Base commit | `417fddb` | Ported from that commit |
+
+What the port had to rewrite, because the two loaders expose different APIs:
+
+- **Platform layer.** `Ic2Fabric` / `Ic2FabricClient` replace the NeoForge `FmlMod` and
+  `ClientModEventHandlerForge`, reproducing NeoForge's registry initialization order explicitly.
+  `FabricEnvProxy` replaces `EnvProxyForge`.
+- **Events.** NeoForge's `NeoForge.EVENT_BUS` is replaced by IC2's own `Ic2EventBus`. Where Fabric has no
+  callback at all, real mixins are used: fog rendering, sound replacement, item attribute modifiers,
+  living-entity hooks and `onDroppedByPlayer`.
+- **Fluids.** Vanilla 1.21.1 has neither `FluidType` nor `FlowingFluid.Properties` (both are NeoForge patches),
+  so every IC2 fluid is backed by a vanilla `FlowingFluid` pairing with `FluidVariantAttributes`.
+- **Rendering.** Fabric removed custom JSON model loaders, so the 388 `"loader": "ic2:*"` model definitions are
+  taken over by a `PreparableModelLoadingPlugin`, and `BakedQuad`s are replayed into Indigo's `QuadEmitter`.
+- **Data.** NeoForge-only biome modifiers and the global loot modifier are reproduced through
+  `fabric-biome-api-v1` and `LootTableEvents.MODIFY`.
+
+The superseded NeoForge adapters are kept verbatim under `src/neoforge-reference/` as reference. They are not
+compiled.
 
 ## Differences from the original
 
@@ -32,6 +67,8 @@ We know players choose this mod for the faithful experience, so changes to the o
 - **Adjusted ore generation parameters for tin, lead, and uranium** (carried over from the `2.9.40-ex119` value changes). Vanilla-IC2 tin skews toward mountain generation, yet players need far more tin than lead and prefer exploring deep veins. While keeping the total amount of tin slightly above lead, we optimized its vertical distribution for a more reasonable game pace.
 - **Adjusted the charge pad's wireless charging.** Originally a charge pad could only charge items on the player at or below the pad's own voltage tier. Now the pad charges items of any voltage tier, but the charging speed is still limited by the pad's tier.
 - **Added the Mining Filter Card.** The Advanced Miner can now use a filter card to specify which ores to mine, letting players customize the mining scope.
+
+This list is upstream's and applies to the mod as a whole. The Fabric port adds no gameplay changes of its own.
 
 ## Copyright notice
 
@@ -63,10 +100,39 @@ In addition to the above, you must credit the mod's origin, include the English 
 
 Build this branch with Java 21.
 
-For more information, see [Release](./release.md).
+```shell
+# Build the mod JAR (build/libs/ic2-fabric-<version>.jar)
+./gradlew build
+
+# Development client / dedicated server
+./gradlew runClient
+./gradlew runServer
+```
+
+Running the client or server requires `eula=true` in `run/eula.txt`.
+
+### Game tests
+
+The whole suite runs headless and writes a JUnit-style report:
 
 ```shell
-gradlew build
-gradlew runClient
-gradlew runServer
+mkdir -p build/gametest/run && echo "eula=true" > build/gametest/run/eula.txt
+./gradlew runGameTestServer
 ```
+
+It currently executes **426 game tests across 57 test classes** (424 passing; two are intermittently flaky under
+concurrent batches). `build/gametest/gametest.xml` is the authoritative result — the console only prints
+assertion failures. If a previous run crashed, delete `build/gametest/run/world` first, or the stale
+`session.lock` makes the next run fail to start.
+
+### Notes for restricted environments
+
+On Windows hosts where Gradle cannot fork its own build JVM (the named pipe is denied and Gradle reports
+`CreatePipe error=5`), use the bundled `tools/gradle-en.cmd`, which launches Gradle in-process:
+
+```shell
+cmd /c "tools\gradle-en.cmd build -x test -x portComponentTest"
+```
+
+For more information, see [Release](./release.md) and the port notes in
+[`docs/HANDOVER.md`](./docs/HANDOVER.md) (Chinese).
