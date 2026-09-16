@@ -1,45 +1,69 @@
-# 2.10.32-ex120
+# beta2601
 
-欢迎来到制作和反馈清单。这里记录了下版本的计划和已知问题。
+First public Fabric build. Welcome — this file tracks what is planned and what is currently broken.
 
-## 已知问题
+## Known issues
 
-### 紧急
+### Blocking
 
-- 注册键 `ingot_*` 和 `*_ingot` 到底哪个才是正确的？这导致 **暂时** 和机械动力不兼容。
-- 创造模式物品栏目前是按照注册键A-Z排序，后续会调整为分类顺序
-- 拟态板物品模型不显示。功能似乎正常。
-- 声音系统隐藏式字幕
-- 待添加：太阳能头盔（3/2 韧性）、静电靴（3/2 韧性）
+- **No recipe viewer.** JEI and AE2 integration (`ic2/integration/**`, 18 files) is not ported yet, so there
+  is no in-game recipe lookup and no AE2 energy integration. The IC2 power grid itself works; it simply
+  cannot connect to AE2's energy acceptor yet.
+- **Save reload and multiplayer sync are unverified.** Everything below was confirmed in a single-player
+  session. Reloading a world and playing with several clients on a dedicated server have not been tested,
+  so treat persistence and multiplayer as unproven.
 
-### 不急
+### Minor
 
-- 自动弹出升级、自动抽入升级、撬棍：原版还没有配方
-- 尚未添加：管道系统
+- Two game tests are **intermittently** red under concurrent batches:
+  `AdvMinerGameTests#advMinerSkipsOreOutsideWhitelist` and
+  `ChunkLoaderGameTests#chunkLoaderForceLoadsWhilePoweredAndStopsWhenDrained`. Both pass in other runs, and
+  the underlying behaviour was verified by hand, so this looks like test isolation between batches sharing a
+  template rather than a gameplay bug.
+- 6 harmless `No data fixer registered for ic2:<entity>` errors on startup. Vanilla prints these for any
+  modded entity without a DFU schema entry. Every loader has them.
+- Four client hooks are deliberately unwired because upstream's implementations are empty:
+  `RenderLivingEvent.Pre/Post`, `RenderHighlightEvent.Block`, `ScreenEvent.Init.Post`.
+- The Obscurator's per-stack overlay is wired through `BuiltinItemRendererRegistry`, but has not been tested
+  with an NBT-carrying Obscurator.
 
-### 要做
+### Not planned here
 
-- 燃料棒（锂）和燃料棒（氚）：原版无功能
-- （可能）改写电网。你能想象吗？MFSU 接 64 个打粉机正常工作而不爆炸。
+Gameplay, balance, recipe and asset changes are not made in this repository. Those belong to
+[IC2R](https://github.com/neo-industrial-mc/IC2R) — the code is shared, so a fix there reaches every
+platform. Report them upstream.
 
-### 准备迁移的联动 Mod
+## What this build is
 
-- [Iridium Source](https://www.mcmod.cn/class/2588.html)
-- [METS](https://www.mcmod.cn/class/2217.html)
-- [Gravitation Suite](https://www.mcmod.cn/class/255.html)
-- [ASP](https://www.mcmod.cn/class/23.html)
+The Fabric port of IC2R for Minecraft 1.21.1. The mod's content is upstream's and was carried over unchanged;
+the platform layer underneath it was rebuilt against Fabric's APIs.
 
-## 与原版的区别
+Verified in game for this release:
 
-### 小巧思
+- Client and dedicated server start; all 388 custom models bake.
+- Game tests: 426 tests across 57 classes, 424 passing.
+- Manually confirmed: Miner, jetpack, charged nano/quantum armour values, nano saber damage, Scrap Box,
+  steam generator fluid output.
 
-- 充电座：现在的无线充电机制不受电压等级限制，但充电速率仍然受限于充电座的规格；充电的顺序为：主手、副手、头盔、胸甲、护腿、靴子、快捷栏0~8、物品栏从左上到右下。
-- 删除：旧版粉色粘球形态的 UU 物质、精炼铁锭、脚手架
-- 翻译：以中文为基准, 重做翻译。全部扁平化
-- 矿脉生成，请使用 [JustEnoughResources](https://github.com/way2muchnoise/JustEnoughResources) 查看。
+## Installing
 
-### 大特性
+- Minecraft **1.21.1**
+- **Fabric Loader 0.16.14** or newer
+- **Fabric API 0.116.17+1.21.1** or newer — required
+- `ic2-fabric-beta2601.jar` in `mods/`
 
-- IC2 电网目前支持 [Applied Energetics 2](https://modrinth.com/mod/ae2) 的能源接收器！
-- 您可以安装 [Configured](https://modrinth.com/mod/configured) 来使用 GUI 调整 IC2 的配置文件！
-- 高级采矿机现在支持采矿过滤卡来自定义更多的矿石名单！
+Do not install the `-sources.jar`; it is a development artifact.
+
+## Reporting problems
+
+Fabric-specific problems — startup crashes, mixin failures, rendering that differs from the NeoForge build,
+Fabric API incompatibilities, anything that only reproduces on Fabric — belong in this repository's issue
+tracker. Include your Fabric Loader and Fabric API versions, the full log, and a crash report if there is one.
+
+Gameplay, balance, recipe or asset problems belong upstream at
+[neo-industrial-mc/IC2R](https://github.com/neo-industrial-mc/IC2R).
+
+## Differences from the original IC2
+
+Unchanged from upstream. See IC2R's own release notes for the current list; this port adds no gameplay
+changes of its own.
