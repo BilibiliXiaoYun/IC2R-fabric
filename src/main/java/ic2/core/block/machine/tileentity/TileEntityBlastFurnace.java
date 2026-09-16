@@ -1,0 +1,239 @@
+package ic2.core.block.machine.tileentity;
+
+import ic2.api.energy.tile.IHeatSource;
+import ic2.api.recipe.IRecipeInput;
+import ic2.api.recipe.MachineRecipeResult;
+import ic2.api.recipe.Recipes;
+import ic2.api.upgrade.IUpgradableBlock;
+import ic2.api.upgrade.UpgradableProperty;
+import ic2.core.ContainerBase;
+import ic2.core.IHasGui;
+import ic2.core.block.comp.Fluids;
+import ic2.core.block.comp.Redstone;
+import ic2.core.block.invslot.InvSlotConsumableLiquidByList;
+import ic2.core.block.invslot.InvSlotOutput;
+import ic2.core.block.invslot.InvSlotProcessableGeneric;
+import ic2.core.block.invslot.InvSlotUpgrade;
+import ic2.core.block.tileentity.TileEntityInventory;
+import ic2.core.fluid.Ic2FluidTank;
+import ic2.core.gui.dynamic.DynamicContainer;
+import ic2.core.gui.dynamic.IGuiValueProvider;
+import ic2.core.network.GrowingBuffer;
+import ic2.core.network.GuiSynced;
+import ic2.core.profile.NotClassic;
+import ic2.core.ref.Ic2BlockEntities;
+import ic2.core.ref.Ic2Fluids;
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.Set;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+
+@NotClassic
+public class TileEntityBlastFurnace extends TileEntityInventory
+    implements IUpgradableBlock, IHasGui, IGuiValueProvider {
+  public static int maxHeat = 50000;
+
+  /** Oxygen doubles progress per tick (100% acceleration → half wall-clock time). */
+  public static final int OXYGEN_PROGRESS_MULTIPLIER = 2;
+
+  public final InvSlotProcessableGeneric inputSlot =
+      new InvSlotProcessableGeneric(this, "input", 1, Recipes.blast_furnace);
+  public final InvSlotOutput outputSlot = new InvSlotOutput(this, "output", 2);
+  public final InvSlotConsumableLiquidByList tankInputSlot =
+      new InvSlotConsumableLiquidByList(
+          this, "cellInput", 1, Ic2Fluids.AIR.still(), Ic2Fluids.OXYGEN.still());
+  public final InvSlotOutput tankOutputSlot = new InvSlotOutput(this, "cellOutput", 1);
+  public final InvSlotUpgrade upgradeSlot = new InvSlotUpgrade(this, "upgrade", 2);
+  @GuiSynced public final Ic2FluidTank fluidTank;
+  protected final Redstone redstone;
+  protected final Fluids fluids;
+  public int heat = 0;
+  @GuiSynced public float guiHeat;
+  protected int progress = 0;
+  protected int progressNeeded = 300;
+  @GuiSynced protected float guiProgress;
+
+  public TileEntityBlastFurnace(BlockPos pos, BlockState state) {
+    super(Ic2BlockEntities.BLAST_FURNACE, pos, state);
+    this.redstone = this.addComponent(new Redstone(this));
+    this.fluids = this.addComponent(new Fluids(this));
+    this.fluidTank =
+        this.fluids.addTankInsert(
+            "fluid", 8000, Fluids.fluidPredicate(Ic2Fluids.AIR.still(), Ic2Fluids.OXYGEN.still()));
+  }
+
+  @Override
+  public void updateEntityServer() {
+    super.updateEntityServer();
+    boolean needsInvUpdate = false;
+    this.heatUp();
+    MachineRecipeResult<IRecipeInput, Collection<ItemStack>, ItemStack> result = this.getOutput();
+    if (result != null && this.isHot()) {
+      this.setActive(true);
+      int fluidPerProgress = result.recipe().getMetaData().getInt("fluid");
+      int duration = result.recipe().getMetaData().getInt("duration");
+      // Clamp so the final tick of an oxygen-boosted run doesn't drain gas past completion.
+      int progressStep =
+          this.isUsingOxygen()
+              ? Math.min(OXYGEN_PROGRESS_MULTIPLIER, Math.max(1, duration - this.progress))
+              : 1;
+      int fluidNeeded = fluidPerProgress * progressStep;
+      if (fluidNeeded > 0 && fluidNeeded <= this.fluidTank.getFluidAmount()) {
+        this.progress += progressStep;
+        this.fluidTank.drainMbUnchecked(fluidNeeded, false);
+      } else if (fluidPerProgress <= this.fluidTank.getFluidAmount()) {
+        // Not enough for a full oxygen step; still advance by 1 if any fluid remains.
+        this.progress++;
+        this.fluidTank.drainMbUnchecked(fluidPerProgress, false);
+      }
+
+      this.progressNeeded = duration;
+      if (this.progress >= duration) {
+        this.operateOnce(result, result.getOutput());
+        needsInvUpdate = true;
+        this.progress = 0;
+      }
+    } else {
+      if (result == null) {
+        this.progress = 0;
+      }
+
+      this.setActive(false);
+    }
+
+    if (this.fluidTank.getFluidAmount() < this.fluidTank.getCapacity()) {
+      this.gainFluid();
+    }
+
+    needsInvUpdate |= this.upgradeSlot.tickNoMark();
+    this.guiProgress = (float) this.progress / this.progressNeeded;
+    this.guiHeat = (float) this.heat / maxHeat;
+    if (needsInvUpdate) {
+      super.setChanged();
+    }
+  }
+
+  public void operateOnce(
+      MachineRecipeResult<IRecipeInput, Collection<ItemStack>, ItemStack> result,
+      Collection<ItemStack> processResult) {
+    this.inputSlot.consume(result);
+    this.outputSlot.add(processResult);
+  }
+
+  public MachineRecipeResult<IRecipeInput, Collection<ItemStack>, ItemStack> getOutput() {
+    if (this.inputSlot.isEmpty()) {
+      return null;
+    } else {
+      MachineRecipeResult<IRecipeInput, Collection<ItemStack>, ItemStack> output =
+          this.inputSlot.process();
+      if (output != null && output.recipe().getMetaData() != null) {
+        return this.outputSlot.canAdd(output.getOutput()) ? output : null;
+      } else {
+        return null;
+      }
+    }
+  }
+
+  public boolean gainFluid() {
+    return this.tankInputSlot.processIntoTank(this.fluidTank, this.tankOutputSlot);
+  }
+
+  @Override
+  protected void loadAdditional(
+      CompoundTag nbt, net.minecraft.core.HolderLookup.Provider registries) {
+    super.loadAdditional(nbt, registries);
+    this.heat = nbt.getInt("heat");
+    this.progress = nbt.getInt("progress");
+  }
+
+  @Override
+  public void saveAdditional(CompoundTag nbt, net.minecraft.core.HolderLookup.Provider registries) {
+    super.saveAdditional(nbt, registries);
+    nbt.putInt("heat", this.heat);
+    nbt.putInt("progress", this.progress);
+  }
+
+  private void heatUp() {
+    int coolingPerTick = 1;
+    int heatRequested = 0;
+    int gainhU = 0;
+    if ((!this.inputSlot.isEmpty() || this.progress >= 1) && this.heat <= maxHeat) {
+      heatRequested = maxHeat - this.heat + 100;
+    } else if (this.redstone.hasRedstoneInput() && this.heat <= maxHeat) {
+      heatRequested = maxHeat - this.heat + 100;
+    }
+
+    if (heatRequested > 0) {
+      Direction dir = this.getFacing();
+      BlockEntity te = this.getLevel().getBlockEntity(this.worldPosition.relative(dir));
+      if (te instanceof IHeatSource) {
+        gainhU = ((IHeatSource) te).drawHeat(dir.getOpposite(), heatRequested, false);
+        this.heat += gainhU;
+      }
+
+      if (gainhU == 0) {
+        this.heat = this.heat - Math.min(this.heat, 1);
+      }
+    } else {
+      this.heat = this.heat - Math.min(this.heat, 1);
+    }
+  }
+
+  public boolean isHot() {
+    return this.heat >= maxHeat;
+  }
+
+  /** True when the process gas tank currently holds oxygen (enables 2× progress). */
+  public boolean isUsingOxygen() {
+    return !this.fluidTank.isEmpty()
+        && this.fluidTank.getFluidStack().getFluid() == Ic2Fluids.OXYGEN.still();
+  }
+
+  @Override
+  public ContainerBase<?> createServerScreenHandler(int syncId, Player player) {
+    return DynamicContainer.create(syncId, player.getInventory(), this);
+  }
+
+  @Override
+  public ContainerBase<?> createClientScreenHandler(
+      int syncId, Inventory inventory, GrowingBuffer data) {
+    return DynamicContainer.create(syncId, inventory, this);
+  }
+
+  @Override
+  public double getGuiValue(String name) {
+    if (name.equals("progress")) {
+      return this.guiProgress;
+    } else if (name.equals("heat")) {
+      return this.guiHeat;
+    } else {
+      throw new IllegalArgumentException();
+    }
+  }
+
+  @Override
+  public double getEnergy() {
+    return 0.0;
+  }
+
+  @Override
+  public boolean useEnergy(double amount) {
+    return false;
+  }
+
+  @Override
+  public Set<UpgradableProperty> getUpgradableProperties() {
+    return EnumSet.of(
+        UpgradableProperty.RedstoneSensitive,
+        UpgradableProperty.ItemConsuming,
+        UpgradableProperty.ItemProducing,
+        UpgradableProperty.FluidConsuming);
+  }
+}

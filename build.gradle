@@ -1,0 +1,98 @@
+plugins {
+    id 'fabric-loom' version '1.10.5'
+    id 'maven-publish'
+}
+version = "${mod_version}${fabric_version_suffix}"
+group = mod_group_id
+base { archivesName = 'ic2-fabric' }
+// Captured outside the loom closures so the configuration cache does not see Gradle script objects.
+// runDir is project-relative: Loom resolves it against the project directory, so passing an absolute
+// path produces a doubled path and CreateProcess error=267.
+def gameTestReport = "${projectDir}/build/gametest/gametest.xml".toString()
+
+loom {
+    accessWidenerPath = file('src/main/resources/ic2.accesswidener')
+    runs {
+        // Runs the fabric-gametest entrypoint suite headlessly and writes a JUnit-style report.
+        // Start it with: tools\gradle-en.cmd runGameTestServer
+        gameTestServer {
+            server()
+            name = 'Game Test Server'
+            vmArg '-Dfabric-api.gametest'
+            vmArg "-Dfabric-api.gametest.report-file=${gameTestReport}"
+            vmArg '-Dfabric-api.gametest.command=true'
+            runDir 'build/gametest/run'
+        }
+    }
+}
+repositories {
+    mavenCentral()
+    maven { url = 'https://maven.blamejared.com/' }
+}
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation 'net.fabricmc:fabric-loader:0.16.14'
+    modImplementation 'net.fabricmc.fabric-api:fabric-api:0.116.17+1.21.1'
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+    withSourcesJar()
+}
+sourceSets.main.resources {
+    srcDir 'src/generated/resources'
+    exclude '**/*.bbmodel', '**/.cache/**', 'META-INF/neoforge.mods.toml'
+}
+sourceSets.main {
+    java {
+        // NeoForge-only trees that still have no Fabric equivalent. They stay in the tree (nothing is
+        // deleted) but are held out of the Fabric compile so the port can be verified independently.
+        // Each exclude is removed in the same change that lands its Fabric implementation:
+        //   ic2/integration/**     -> needs Fabric JEI/AE2 dependencies
+        // The superseded NeoForge platform adapters were moved verbatim to
+        // src/neoforge-reference/java/ic2/forge/ and are no longer part of this source set at all.
+        exclude 'ic2/integration/**'
+    }
+}
+// Captured in a local so the closure does not reach back into the Gradle script object, which the
+// configuration cache forbids.
+def modVersion = version
+processResources {
+    inputs.property 'version', modVersion
+    filesMatching('fabric.mod.json') { expand version: modVersion }
+}
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+    options.compilerArgs += ['-Xmaxerrs', '2000']
+}
+test { useJUnitPlatform() }
+
+// Compile and test completed platform components while the full port is in progress.
+// This task does not package a mod or imply that the full application compiles.
+sourceSets {
+    portComponents {
+        java.srcDir 'src/main/java'
+        java.include 'ic2/fabric/config/**', 'ic2/fabric/FabricItemHandler.java',
+            'ic2/core/init/IC2Config.java', 'ic2/core/init/IC2ClientConfig.java',
+            'ic2/core/item/EnvItemHandler.java', 'ic2/core/block/personal/IPersonalBlock.java'
+        compileClasspath = sourceSets.main.compileClasspath
+        runtimeClasspath = output + compileClasspath
+    }
+    portComponentTest {
+        java.srcDir 'src/portComponentTest/java'
+        compileClasspath += sourceSets.portComponents.output + sourceSets.main.compileClasspath
+        runtimeClasspath += sourceSets.portComponents.output + sourceSets.main.compileClasspath
+    }
+}
+configurations {
+    portComponentTestImplementation.extendsFrom testImplementation
+    portComponentTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+tasks.register('portComponentTest', Test) {
+    testClassesDirs = sourceSets.portComponentTest.output.classesDirs
+    classpath = sourceSets.portComponentTest.runtimeClasspath
+    useJUnitPlatform()
+}

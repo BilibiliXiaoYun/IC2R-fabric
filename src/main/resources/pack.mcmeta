@@ -1,0 +1,14 @@
+{
+  "pack": {
+    "pack_format": 34,
+    "supported_formats": [34, 48],
+    "description": "IC2R Resource Pack"
+  },
+  "language": {
+    "en_IC": {
+      "name": "IndustrialCraft 2 English (United States)",
+      "region": "EN",
+      "bidirectional": false
+    }
+  }
+}

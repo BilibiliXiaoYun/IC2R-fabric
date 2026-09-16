@@ -1,0 +1,8 @@
+package ic2.api.item;
+
+import java.util.List;
+import net.minecraft.world.item.ItemStack;
+
+public interface IItemHudInfo {
+  List<String> getHudInfo(ItemStack var1, boolean var2);
+}

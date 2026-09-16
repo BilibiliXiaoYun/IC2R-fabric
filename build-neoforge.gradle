@@ -1,0 +1,200 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'net.neoforged.moddev' version '2.0.141'
+    id 'com.diffplug.spotless' version '8.8.0'
+    id 'idea'
+}
+
+tasks.named('wrapper', Wrapper).configure {
+    distributionType = Wrapper.DistributionType.BIN
+}
+
+version = mod_version
+group = mod_group_id
+
+sourceSets.main.resources {
+    srcDir('src/generated/resources')
+
+    exclude("**/*.bbmodel")
+    exclude("src/generated/**/.cache")
+}
+
+repositories {
+    mavenCentral()
+    maven { url = "https://maven.blamejared.com/" }
+    maven { url "https://api.modrinth.com/maven" }
+}
+
+base {
+    archivesName = "${mod_id}-neoforge"
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+spotless {
+    java {
+        googleJavaFormat('1.35.0')
+        formatAnnotations()
+    }
+
+    format 'misc', {
+        target '*.gradle', '*.md', '.gitignore', '.editorconfig'
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+
+    runs {
+        client {
+            client()
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        server {
+            server()
+            programArgument '--nogui'
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        gameTestServer {
+            type = "gameTestServer"
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        data {
+            data()
+            programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        }
+
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            logLevel = org.slf4j.event.Level.DEBUG
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+
+    unitTest {
+        enable()
+        testedMod = mods."${mod_id}"
+    }
+}
+
+configurations {
+    runtimeClasspath.extendsFrom localRuntime
+}
+
+dependencies {
+    compileOnly "mezz.jei:jei-1.21.1-neoforge-api:${jei_version}"
+    runtimeOnly "mezz.jei:jei-1.21.1-neoforge:${jei_version}"
+
+    compileOnly "org.appliedenergistics:appliedenergistics2:${ae2_version}:api"
+
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+publishing {
+    publications {
+        register('mavenJava', MavenPublication) {
+            artifactId = 'ic2r'
+            from components.java
+        }
+    }
+    repositories {
+        maven {
+            name = 'local'
+            url "file://${project.projectDir}/repo"
+        }
+
+        def githubRepository = providers.environmentVariable('GITHUB_REPOSITORY')
+        def githubToken = providers.environmentVariable('GITHUB_TOKEN')
+        if (githubRepository.isPresent() && githubToken.isPresent()) {
+            maven {
+                name = 'githubPackages'
+                url = uri("https://maven.pkg.github.com/${githubRepository.get()}")
+                credentials {
+                    username = providers.environmentVariable('GITHUB_ACTOR').getOrElse('github-actions')
+                    password = githubToken.get()
+                }
+            }
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xmaxerrs', '100000']
+}
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = true
+    }
+}
+
+tasks.register('syncVersion') {
+    doLast {
+        def version = mod_version
+        def badgeVersion = version.replace('-', '--')
+
+        def readmeFile = file('README.md')
+        def readmeContent = readmeFile.text
+        readmeContent = readmeContent.replaceAll(
+                /(Version-)[^"<\s]+(-blue)/,
+                "\$1${badgeVersion}\$2"
+        )
+        readmeContent = readmeContent.replaceAll(
+                /alt="Version [^"]+"/,
+                "alt=\"Version ${version}\""
+        )
+        readmeFile.text = readmeContent
+
+        def releaseFile = file('release.md')
+        def releaseContent = releaseFile.text
+        releaseContent = releaseContent.replaceAll(/^# .+/, "# ${version}")
+        releaseFile.text = releaseContent
+
+        logger.log(LogLevel.ERROR, "Notice: current version is: ${version}")
+    }
+}

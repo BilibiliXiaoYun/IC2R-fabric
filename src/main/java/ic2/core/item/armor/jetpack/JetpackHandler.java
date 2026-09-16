@@ -1,0 +1,258 @@
+package ic2.core.item.armor.jetpack;
+
+import ic2.api.item.ElectricItem;
+import ic2.api.item.IBackupElectricItemManager;
+import ic2.api.item.IElectricItem;
+import ic2.core.ref.Ic2Items;
+import ic2.core.util.Ic2Tooltip;
+import ic2.core.util.StackUtil;
+import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
+import net.minecraft.ChatFormatting;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.tags.DamageTypeTags;
+import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.CustomData;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
+
+public class JetpackHandler implements IBackupElectricItemManager {
+  static final ItemStack jetpack = new ItemStack(Ic2Items.JETPACK_ELECTRIC);
+  private static final Map<Player, ItemStack> playerArmorBuffer = new WeakHashMap<>();
+  public static JetpackHandler instance;
+
+  private boolean internalHandlesCheck = false;
+
+  private JetpackHandler() {
+    ElectricItem.registerBackupManager(this);
+  }
+
+  public static void init() {
+    instance = new JetpackHandler();
+  }
+
+  public static void onPlayerTick(Player player) {
+    ItemStack stack = player.getItemBySlot(EquipmentSlot.CHEST);
+    if (hasJetpack(stack)) {
+      JetpackLogic.onArmorTick(player.level(), player, stack, getJetpack(stack));
+    } else {
+      // Only the local client player owns the jetpack loop sound.
+      JetpackLogic.stopJetpackSound(player);
+    }
+  }
+
+  public static void setJetpackAttached(ItemStack stack, boolean value) {
+    if (StackUtil.isEmpty(stack)) {
+      return;
+    }
+
+    if (!value) {
+      if (!stack.has(DataComponents.CUSTOM_DATA)) {
+        return;
+      }
+
+      CustomData.update(DataComponents.CUSTOM_DATA, stack, nbt -> nbt.remove("hasIC2Jetpack"));
+    } else if (StackUtil.getEquipmentSlotForItem(stack) == EquipmentSlot.CHEST) {
+      CustomData.update(
+          DataComponents.CUSTOM_DATA, stack, nbt -> nbt.putBoolean("hasIC2Jetpack", true));
+    }
+  }
+
+  public static boolean hasJetpackAttached(ItemStack stack) {
+    return !StackUtil.isEmpty(stack)
+        && StackUtil.getEquipmentSlotForItem(stack) == EquipmentSlot.CHEST
+        && stack.has(net.minecraft.core.component.DataComponents.CUSTOM_DATA)
+        && StackUtil.getTag(stack).getBoolean("hasIC2Jetpack");
+  }
+
+  public static boolean hasJetpack(ItemStack stack) {
+    return !StackUtil.isEmpty(stack)
+        && (hasJetpackAttached(stack) || stack.getItem() instanceof IJetpack);
+  }
+
+  public static IJetpack getJetpack(ItemStack stack) {
+    assert hasJetpack(stack);
+    return stack.getItem() instanceof IJetpack
+        ? (IJetpack) stack.getItem()
+        : (IJetpack) jetpack.getItem();
+  }
+
+  public static double getTransferLimit() {
+    return ((IElectricItem) jetpack.getItem()).getTransferLimit(jetpack);
+  }
+
+  @Override
+  public double charge(
+      ItemStack stack, double amount, int tier, boolean ignoreTransferLimit, boolean simulate) {
+    if (this.getTier(stack) > tier) {
+      return 0.0;
+    }
+
+    if (!ignoreTransferLimit) {
+      amount = Math.min(amount, getTransferLimit());
+    }
+
+    double charge =
+        stack.has(net.minecraft.core.component.DataComponents.CUSTOM_DATA)
+            ? StackUtil.getTag(stack).getDouble("charge")
+            : 0.0;
+    amount = Math.min(amount, this.getMaxCharge(stack) - charge);
+    if (!simulate) {
+      StackUtil.getOrCreateNbtData(stack).putDouble("charge", charge + amount);
+    }
+
+    return amount;
+  }
+
+  @Override
+  public double discharge(
+      ItemStack stack,
+      double amount,
+      int tier,
+      boolean ignoreTransferLimit,
+      boolean externally,
+      boolean simulate) {
+    if (!externally
+        && this.getTier(stack) <= tier
+        && stack.has(net.minecraft.core.component.DataComponents.CUSTOM_DATA)) {
+      if (!ignoreTransferLimit) {
+        amount = Math.min(amount, getTransferLimit());
+      }
+
+      CompoundTag nbt = StackUtil.getTag(stack);
+      double charge = nbt.getDouble("charge");
+      amount = Math.min(amount, charge);
+      if (!simulate) {
+        charge -= amount;
+        if (charge == 0.0) {
+          nbt.remove("charge");
+        } else {
+          nbt.putDouble("charge", charge);
+        }
+
+        StackUtil.setTag(stack, nbt);
+      }
+
+      return amount;
+    } else {
+      return 0.0;
+    }
+  }
+
+  @Override
+  public double getCharge(ItemStack stack) {
+    return this.discharge(stack, Double.MAX_VALUE, Integer.MAX_VALUE, true, false, true);
+  }
+
+  @Override
+  public double getStackCharge(ItemStack stack) {
+    return this.getCharge(stack);
+  }
+
+  @Override
+  public double getMaxCharge(ItemStack stack) {
+    return ElectricItem.manager.getMaxCharge(jetpack.copy());
+  }
+
+  @Override
+  public boolean canUse(ItemStack stack, double amount) {
+    return ElectricItem.rawManager.canUse(stack, amount);
+  }
+
+  @Override
+  public boolean use(ItemStack stack, double amount, LivingEntity entity) {
+    return ElectricItem.rawManager.use(stack, amount, entity);
+  }
+
+  @Override
+  public void chargeFromArmor(ItemStack stack, LivingEntity entity) {}
+
+  @Override
+  public String getToolTip(ItemStack stack) {
+    return ElectricItem.rawManager.getToolTip(stack);
+  }
+
+  @Override
+  public int getTier(ItemStack stack) {
+    return ElectricItem.manager.getTier(jetpack.copy());
+  }
+
+  @Override
+  public synchronized boolean handles(ItemStack stack) {
+    if (this.internalHandlesCheck) {
+      return false;
+    }
+
+    this.internalHandlesCheck = true;
+    boolean handle = hasJetpackAttached(stack) && ElectricItem.manager.getMaxCharge(stack) <= 0.0;
+    this.internalHandlesCheck = false;
+    return handle;
+  }
+
+  /**
+   * Post-tick hook: restores an attached jetpack that was knocked out of the chest slot by fatal
+   * damage in the same tick. Called from the Fabric player-tick callback.
+   */
+  public void restoreArmorAfterDamage(Player player) {
+    if (playerArmorBuffer.containsKey(player)) {
+      ItemStack stack = player.getItemBySlot(EquipmentSlot.CHEST);
+      ItemStack lastStack = playerArmorBuffer.get(player);
+      if (!StackUtil.isEmpty(lastStack) && hasJetpackAttached(lastStack) && StackUtil.isEmpty(stack)) {
+        ItemStack newJetpack = jetpack.copy();
+        double oldCharge = ElectricItem.manager.getCharge(lastStack);
+        ElectricItem.manager.charge(newJetpack, oldCharge, Integer.MAX_VALUE, true, false);
+        player.setItemSlot(EquipmentSlot.CHEST, newJetpack);
+      }
+
+      playerArmorBuffer.remove(player);
+    }
+  }
+
+  /** Client tooltip hook, driven by Fabric's item tooltip callback. */
+  @Environment(EnvType.CLIENT)
+  public void appendTooltip(ItemStack stack, List<Component> tooltip) {
+    if (hasJetpackAttached(stack)) {
+      Ic2Tooltip.add(
+          tooltip, Component.translatable("ic2.jetpackAttached").withStyle(ChatFormatting.YELLOW));
+      String energyTooltip = ElectricItem.manager.getToolTip(stack);
+      if (energyTooltip != null && !energyTooltip.trim().isEmpty()) {
+        Ic2Tooltip.add(tooltip, Component.literal(energyTooltip));
+      }
+    }
+  }
+
+  /** Chest-slot change hook: stops the jetpack loop sound when the jetpack leaves the slot. */
+  public void onEquipmentChange(LivingEntity entity, EquipmentSlot slot, ItemStack from, ItemStack to) {
+    if (slot != EquipmentSlot.CHEST || !(entity instanceof Player player)) {
+      return;
+    }
+
+    if (!hasJetpack(to) && !hasJetpack(from)) {
+      return;
+    }
+
+    JetpackLogic.stopJetpackSound(player);
+  }
+
+  /**
+   * Incoming-damage hook: remembers an attached jetpack so {@link
+   * #restoreArmorAfterDamage(Player)} can put it back after a fatal hit.
+   */
+  public void onIncomingDamage(LivingEntity entity, DamageSource source) {
+    if (entity instanceof Player player
+        && source != null
+        && !source.is(DamageTypeTags.BYPASSES_INVULNERABILITY)) {
+      ItemStack currentArmor = player.getItemBySlot(EquipmentSlot.CHEST);
+      if (hasJetpackAttached(currentArmor)) {
+        playerArmorBuffer.put(player, currentArmor);
+      }
+    }
+  }
+}

@@ -1,0 +1,122 @@
+package ic2.core.gametest;
+
+import ic2.api.energy.EnergyNet;
+import ic2.api.energy.NodeStats;
+import ic2.api.energy.tile.IEnergySource;
+import ic2.api.energy.tile.IEnergyTile;
+import ic2.core.block.wiring.tileentity.TileEntityElectricBatBox;
+import ic2.core.item.tool.ContainerMeter;
+import ic2.core.item.tool.HandHeldMeter;
+import ic2.core.item.tool.ItemToolMeter;
+import ic2.core.ref.Ic2Blocks;
+import ic2.core.ref.Ic2Items;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.core.BlockPos;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.core.Direction;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.gametest.framework.GameTest;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.gametest.framework.GameTestHelper;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.server.level.ServerPlayer;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.world.InteractionHand;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.world.item.ItemStack;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.world.level.GameType;
+import ic2.core.item.PriorityUsableItem;
+import net.minecraft.world.level.block.Blocks;
+
+public class MeterGameTests {
+  private static final String EMPTY = "ic2:gametest/empty3x3x3";
+
+  private static final BlockPos TARGET_POS = new BlockPos(1, 1, 1);
+
+  @GameTest(template = EMPTY)
+  public static void meterReadsZeroAfterPowerStops(GameTestHelper helper) {
+    BlockPos sourcePos = new BlockPos(1, 2, 1);
+    helper.setBlock(sourcePos, Ic2Blocks.BATBOX);
+    helper.setBlock(TARGET_POS, Ic2Blocks.MACERATOR);
+    TileEntityElectricBatBox batbox = (TileEntityElectricBatBox) helper.getBlockEntity(sourcePos);
+    batbox.energy.addEnergy(320.0);
+    boolean[] sawFlow = {false};
+
+    helper.onEachTick(
+        () -> {
+          IEnergyTile source =
+              EnergyNet.instance.getTile(helper.getLevel(), helper.absolutePos(sourcePos));
+          if (source == null) {
+            return;
+          }
+
+          NodeStats stats = EnergyNet.instance.getNodeStats(source);
+          if (stats == null) {
+            return;
+          }
+
+          if (!sawFlow[0]) {
+            if (stats.getEnergyOut() > 0.0) {
+              sawFlow[0] = true;
+              batbox.energy.forceAddEnergy(-batbox.energy.getEnergy());
+            }
+          } else if (stats.getEnergyOut() == 0.0) {
+            Ic2GameTestAssertions.assertNear(
+                helper, stats.getEnergyOut(), 0.0, "meter reading after power stops");
+            helper.succeed();
+          }
+        });
+  }
+
+  // the meter finds the clicked energy net tile and provides its readout container
+  // (mock players can't receive the menu-open payload, so the container is created directly)
+  @GameTest(template = EMPTY)
+  public static void meterReadsEnergyTile(GameTestHelper helper) {
+    helper.setBlock(TARGET_POS, Ic2Blocks.GENERATOR);
+    ServerPlayer player = helper.makeMockServerPlayerInLevel();
+    player.setGameMode(GameType.SURVIVAL);
+    ItemStack stack = new ItemStack(Ic2Items.METER);
+    player.setItemInHand(InteractionHand.MAIN_HAND, stack);
+
+    // give the freshly placed block entity a tick to join the energy net
+    helper.runAfterDelay(
+        2,
+        () -> {
+          IEnergyTile tile =
+              EnergyNet.instance.getTile(helper.getLevel(), helper.absolutePos(TARGET_POS));
+          helper.assertTrue(
+              tile instanceof IEnergySource, "the generator should be an energy net source");
+
+          HandHeldMeter inventory =
+              (HandHeldMeter)
+                  ((ItemToolMeter) Ic2Items.METER)
+                      .getInventory(player, InteractionHand.MAIN_HAND, stack);
+          AbstractContainerMenu menu = inventory.createServerScreenHandler(1, player);
+          helper.assertTrue(
+              menu instanceof ContainerMeter, "the meter should provide its container");
+          ((ContainerMeter) menu).setUut(tile);
+          helper.succeed();
+        });
+  }
+
+  @GameTest(template = EMPTY)
+  public static void meterDoesNotOpenOnPlainBlock(GameTestHelper helper) {
+    helper.setBlock(TARGET_POS, Blocks.STONE);
+    ServerPlayer player = helper.makeMockServerPlayerInLevel();
+    player.setGameMode(GameType.SURVIVAL);
+    ItemStack stack = new ItemStack(Ic2Items.METER);
+    player.setItemInHand(InteractionHand.MAIN_HAND, stack);
+
+    // NeoForge declared Item#onItemUseFirst; on Fabric the hook lives on IC2's PriorityUsableItem
+    // and is dispatched by UseBlockCallback.
+    ((PriorityUsableItem) stack.getItem())
+        .onItemUseFirst(stack, Ic2GameTestUtil.useOn(helper, player, TARGET_POS, Direction.NORTH));
+
+    helper.assertFalse(
+        player.containerMenu instanceof ContainerMeter, "meter must not open on a plain block");
+    helper.succeed();
+  }
+}

@@ -1,0 +1,76 @@
+package ic2.core.block.misc;
+
+import ic2.core.Ic2DamageSource;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FlowingFluid;
+
+public class HydrogenBlock extends LiquidBlock {
+  public HydrogenBlock(FlowingFluid fluid, Properties properties) {
+    super(fluid, properties);
+  }
+
+  private static void checkFireAndExplode(Level world, BlockPos pos) {
+    for (int dx = -1; dx <= 1; dx++) {
+      for (int dy = -1; dy <= 1; dy++) {
+        for (int dz = -1; dz <= 1; dz++) {
+          if (dx == 0 && dy == 0 && dz == 0) continue;
+          BlockPos neighborPos = pos.offset(dx, dy, dz);
+          if (world.getBlockState(neighborPos).is(Blocks.FIRE)) {
+            // Remove fluid first so the source block is gone before the blast.
+            world.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
+            if (!world.isClientSide && world instanceof ServerLevel serverLevel) {
+              // Custom damage type so advancements can detect hydrogen blasts specifically.
+              serverLevel.explode(
+                  null,
+                  Ic2DamageSource.hydrogenExplosion(serverLevel),
+                  null,
+                  pos.getX() + 0.5,
+                  pos.getY() + 0.5,
+                  pos.getZ() + 0.5,
+                  2.0F,
+                  false,
+                  Level.ExplosionInteraction.BLOCK);
+            }
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  @Override
+  public void entityInside(BlockState state, Level world, BlockPos pos, Entity entity) {}
+
+  @Override
+  public void onPlace(
+      BlockState state, Level world, BlockPos pos, BlockState oldState, boolean movedByPiston) {
+    // LiquidBlock#onPlace schedules the fluid tick; without it a placed hydrogen source never
+    // starts flowing.
+    super.onPlace(state, world, pos, oldState, movedByPiston);
+    if (state.getValue(LiquidBlock.LEVEL) == 0) {
+      checkFireAndExplode(world, pos);
+    }
+  }
+
+  @Override
+  public void neighborChanged(
+      BlockState state,
+      Level world,
+      BlockPos pos,
+      Block neighborBlock,
+      BlockPos neighborPos,
+      boolean movedByPiston) {
+    // Same as onPlace: re-schedule fluid flow ticks for source and flowing cells.
+    super.neighborChanged(state, world, pos, neighborBlock, neighborPos, movedByPiston);
+    if (state.getValue(LiquidBlock.LEVEL) == 0) {
+      checkFireAndExplode(world, pos);
+    }
+  }
+}

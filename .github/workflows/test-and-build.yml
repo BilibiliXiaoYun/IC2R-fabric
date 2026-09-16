@@ -1,0 +1,161 @@
+name: Test and build
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gametests:
+    name: Game tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      # Loom downloads Minecraft, the mappings and the Fabric API here, so cache the Gradle user home
+      # as a whole. The NeoForge-only neoformruntime/forge_gradle caches no longer apply.
+      - name: Cache Gradle and Minecraft downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            build/tmp/downloadAssets
+          key: minecraft-${{ runner.os }}-${{ hashFiles('gradle.properties', 'settings.gradle', 'build.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            minecraft-${{ runner.os }}-
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Accept the Minecraft EULA for the game test server
+        run: |
+          mkdir -p build/gametest/run
+          echo "eula=true" > build/gametest/run/eula.txt
+
+      # The mod ships 388 custom model loaders and an access widener, so a plain compileJava is not
+      # enough to catch resource or remap problems; build the real JAR.
+      - name: Build mod JAR
+        run: ./gradlew --no-daemon --stacktrace build
+
+      - name: Run unit tests
+        run: ./gradlew --no-daemon --stacktrace test
+
+      - name: Run game tests
+        run: ./gradlew --no-daemon --stacktrace runGameTestServer
+
+      - name: Prepare game test failure report
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p run
+          report="run/gametest-failure-report.md"
+          {
+            echo "# Game Test Failure Report"
+            echo
+            echo "Workflow: ${GITHUB_WORKFLOW}"
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "Commit: ${GITHUB_SHA}"
+            echo
+            if [[ -f build/gametest/gametest.xml ]]; then
+              echo "## JUnit report"
+              echo
+              echo '```xml'
+              cat build/gametest/gametest.xml
+              echo '```'
+              echo
+            fi
+            if [[ -f build/gametest/run/logs/latest.log ]]; then
+              echo "## Summary"
+              awk '/GAME TESTS COMPLETE/{flag=1} flag && /====|required tests failed|   - /{print}' build/gametest/run/logs/latest.log
+              echo
+              echo "## Recent Log"
+              tail -n 200 build/gametest/run/logs/latest.log
+            else
+              echo "No build/gametest/run/logs/latest.log file was produced."
+            fi
+          } > "$report"
+          cat "$report" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload game test failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gametest-failure-report
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            run/gametest-failure-report.md
+            build/gametest/gametest.xml
+            build/gametest/run/logs/**
+            build/gametest/run/crash-reports/**
+            build/reports/**
+            build/test-results/**
+            hs_err_pid*.log
+
+  build:
+    name: Build result JAR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: gametests
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Cache Gradle and Minecraft downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            build/tmp/downloadAssets
+          key: minecraft-${{ runner.os }}-${{ hashFiles('gradle.properties', 'settings.gradle', 'build.gradle', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            minecraft-${{ runner.os }}-
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+
+      - name: Build result JAR
+        run: ./gradlew --no-daemon --stacktrace build
+
+      # withSourcesJar() also emits a -sources.jar; upload only the mod JAR.
+      - name: Upload result JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-jar
+          if-no-files-found: error
+          path: build/libs/ic2-fabric-*.jar
+          overwrite: true
