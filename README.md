@@ -1,4 +1,4 @@
-# IndustrialCraft 2: Refactored — Fabric port
+# IC2R — Fabric port
 
 <img src="https://img.shields.io/badge/Minecraft-1.21.1-brightgreen" alt="Minecraft 1.21.1">
 <img src="https://img.shields.io/badge/Fabric%20Loader-0.16.14-dbd0b4" alt="Fabric Loader 0.16.14">
@@ -6,133 +6,126 @@
 <img src="https://img.shields.io/badge/Version-21.1.0--fabric.1-blue" alt="Version 21.1.0-fabric.1">
 <img src="https://img.shields.io/badge/License-AGPL--3.0-blue" alt="License AGPL-3.0">
 
-This repository is a **Fabric 1.21.1 port** of [IC2R](https://github.com/neo-industrial-mc/IC2R), the community
-continuation of IC2 originally built on NeoForge. The mod itself — gameplay, values, assets, recipes — is IC2R's
-and is unchanged by the port; only the platform layer was rewritten. See
-[Relationship to upstream](#relationship-to-upstream) for exactly what that means.
+IndustrialCraft 2 on **Minecraft 1.21.1 Fabric**.
 
-This project's code was obtained by decompiling the official build `2.9.40-ex119`, with missing and broken functionality migrated over from `2.8.222-ex112`.
+This repository is the Fabric build of [IC2R](https://github.com/neo-industrial-mc/IC2R). IC2R is the community
+continuation of IC2 and the source of truth for everything the player sees: gameplay, balance values, recipes
+and assets. That content is carried over here unchanged. What is different is the platform underneath it —
+IC2R targets NeoForge, this repository targets Fabric — so the loader-facing layer was rebuilt against
+Fabric's APIs while the mod itself was left alone.
 
-## Foreword
+If you want the NeoForge build, go upstream. If you play on Fabric, you are in the right place.
 
-IC2 is probably dead. No official word on open-sourcing it, and the successor developers remain absent.
+## Status
 
-But the community's call never went quiet. Players have waited too long — waited for an authentic IC2 that runs on modern versions.
+Working and verified in game:
 
-So people stepped up. [IC2CR](https://github.com/yu1745/ic2-fabric) open-sourced first, targeting 1.20.1 Fabric, with considerable fanfare. But open it up and look: the mechanics changed, the values changed, the UI changed — much of the migration was even delegated to AI. The level of completeness may be acceptable, but it is no longer IC2. It is something else wearing IC2's name.
+- Client and dedicated server both start; all 388 custom models bake without errors.
+- Game tests: **426 tests across 57 classes** run headless, 424 passing. The two remaining failures are
+  intermittent under concurrent batches, not gameplay bugs.
+- Manually confirmed: the Miner, the jetpack, charged nano/quantum armour values, the nano saber's damage,
+  the Scrap Box, and the steam generator's fluid output.
 
-We are different, even with the sword of copyright hanging over our heads. From the very beginning we have had exactly one goal: **bring IC2 to modern Minecraft in its entirety, while changing the original functionality and values as little as possible.**
+Known gaps:
 
-In the end, we did it. What reached players' hands was a complete, playable IC2 — originally on 1.20.1 Forge, now tracking NeoForge 1.21.1, and with this repository also Fabric 1.21.1 — and it is still the IC2 you remember.
+- **No recipe viewer.** JEI and AE2 integration (`ic2/integration/**`) is not ported yet, so there is no
+  in-game recipe lookup.
+- Save reload and multiplayer sync have not been verified.
 
-Yet we never intended to upstage the original. The public discourse around this has been very hostile; I have received malicious attacks and threats. To stress it once more: **we are not IC2's official successors.** We are simply players who love IC2 and want to keep playing it on modern versions.
+See [`docs/HANDOVER.md`](./docs/HANDOVER.md) (Chinese) for the full port state, and
+[`FABRIC_PORT_STATUS.md`](./FABRIC_PORT_STATUS.md) for the progress report.
 
-## Relationship to upstream
+## Installing
 
-[IC2R](https://github.com/neo-industrial-mc/IC2R) is the upstream project and the source of truth for gameplay. This
-repository is a port of it, not a fork with its own design. What changed, and what did not:
+1. Minecraft **1.21.1** with **Fabric Loader 0.16.14** or newer.
+2. [Fabric API](https://modrinth.com/mod/fabric-api) **0.116.17+1.21.1** or newer — required.
+3. Drop `ic2-fabric-<version>.jar` into your `mods/` folder.
 
-| | Upstream IC2R | This repository |
-| --- | --- | --- |
-| Mod loader | NeoForge | **Fabric** (Fabric Loader 0.16.14, Fabric API 0.116.17+1.21.1) |
-| Minecraft | 1.21.1 | 1.21.1 |
-| Gameplay, values, recipes, assets | — | **Unchanged** |
-| Base commit | `417fddb` | Ported from that commit |
+The JAR is the remapped production build; the `-sources.jar` beside it is for development only and should not
+be installed.
 
-What the port had to rewrite, because the two loaders expose different APIs:
+## Building
 
-- **Platform layer.** `Ic2Fabric` / `Ic2FabricClient` replace the NeoForge `FmlMod` and
-  `ClientModEventHandlerForge`, reproducing NeoForge's registry initialization order explicitly.
-  `FabricEnvProxy` replaces `EnvProxyForge`.
-- **Events.** NeoForge's `NeoForge.EVENT_BUS` is replaced by IC2's own `Ic2EventBus`. Where Fabric has no
-  callback at all, real mixins are used: fog rendering, sound replacement, item attribute modifiers,
-  living-entity hooks and `onDroppedByPlayer`.
-- **Fluids.** Vanilla 1.21.1 has neither `FluidType` nor `FlowingFluid.Properties` (both are NeoForge patches),
-  so every IC2 fluid is backed by a vanilla `FlowingFluid` pairing with `FluidVariantAttributes`.
-- **Rendering.** Fabric removed custom JSON model loaders, so the 388 `"loader": "ic2:*"` model definitions are
-  taken over by a `PreparableModelLoadingPlugin`, and `BakedQuad`s are replayed into Indigo's `QuadEmitter`.
-- **Data.** NeoForge-only biome modifiers and the global loot modifier are reproduced through
-  `fabric-biome-api-v1` and `LootTableEvents.MODIFY`.
-
-The superseded NeoForge adapters are kept verbatim under `src/neoforge-reference/` as reference. They are not
-compiled.
-
-## Differences from the original
-
-We know players choose this mod for the faithful experience, so changes to the original are extremely restrained. Below is the complete list of changes, with nothing hidden:
-
-- **Removed item-form UU-Matter** (`uu_matter`, the pink slimeball) and its downstream machines. The IC2 Dev Team already removed the Mass Fabricator (`mass_fabricator`) crafting recipe back in `2.8.222-ex112`, so the leftover UU-Matter replication features no longer had a reason to exist.
-- **Removed the Refined Iron Ingot** (`refined_iron_ingot`). It is an IC2 Classic item, not part of IC2 Experimental — its role is filled by the Steel Ingot.
-- **Removed the Scaffold** (`scaffold`). Modern Minecraft ships its own scaffolding, making IC2's redundant and unnecessary. In addition, obtaining Reinforced Stone by spraying Construction Foam onto Iron Scaffolds has been reverted to a crafting recipe — 8 Stone plus 1 Advanced Alloy.
-- **Adjusted ore generation parameters for tin, lead, and uranium** (carried over from the `2.9.40-ex119` value changes). Vanilla-IC2 tin skews toward mountain generation, yet players need far more tin than lead and prefer exploring deep veins. While keeping the total amount of tin slightly above lead, we optimized its vertical distribution for a more reasonable game pace.
-- **Adjusted the charge pad's wireless charging.** Originally a charge pad could only charge items on the player at or below the pad's own voltage tier. Now the pad charges items of any voltage tier, but the charging speed is still limited by the pad's tier.
-- **Added the Mining Filter Card.** The Advanced Miner can now use a filter card to specify which ores to mine, letting players customize the mining scope.
-
-This list is upstream's and applies to the mod as a whole. The Fabric port adds no gameplay changes of its own.
-
-## Copyright notice
-
-[IC2 Dev Team citation](https://forum.industrial-craft.net/thread/9843-mc-1-7-ic%C2%B2-v-2-1-x-2-2-x-experimental/?postID=131008#post131008)
-
-**The code in this repository belongs to the IC2 Dev Team. Even though my collaborators and I have refactored and fixed the code, in theory we hold copyright only over the original code we ourselves added.**
-
-This repository is licensed under AGPL-3.0 (see [LICENSE](./LICENSE)), which applies to our own original contributions. The copyright of the underlying project belongs to the original IC2 Dev Team. We do not own — and do not claim to own — the copyright to IC2's code and asset files. We merely decompile, fix, port, and maintain IC2.
-
-Given this — and authorization from the original authors may never come — once this branch has no known bugs, we will focus on rebuilding the code architecture. Textures and asset files remain an open question: we want to keep the original feel while avoiding copyright problems.
-
-### Mod file
-
-The decompiled code (this repository) is still a derivative work of the original. It cannot unilaterally determine the licensing of the project as a whole.
-
-Whether commercial servers may use it is not something I can decide alone, because the original authors still own the copyright to the underlying code.
-
-I cannot legally declare that **any commercial server may freely use this mod**, since that involves rights I have no authority to grant.
-
-Even if I wrote *commercial use permitted*, if the original authors do not allow it, that grant would simply have no effect on the parts they hold copyright to.
-
-From a copyright standpoint, the **original authors** could in theory demand that the repository be taken down, that distribution stop, or oppose any form of public distribution, commercial or not.
-
-### Modpacks
-
-In addition to the above, you must credit the mod's origin, include the English description and descriptions in other languages, and the links designated by the original dev team: `https://industrial-craft.net/` or `https://forum.industrial-craft.net/`.
-
-## Quick start
-
-Build this branch with Java 21.
+Java 21 is required.
 
 ```shell
-# Build the mod JAR (build/libs/ic2-fabric-<version>.jar)
-./gradlew build
-
-# Development client / dedicated server
-./gradlew runClient
-./gradlew runServer
+./gradlew build          # -> build/libs/ic2-fabric-<version>.jar
+./gradlew runClient      # development client
+./gradlew runServer      # development dedicated server
 ```
 
-Running the client or server requires `eula=true` in `run/eula.txt`.
+`runClient` and `runServer` need `eula=true` in `run/eula.txt`.
 
 ### Game tests
 
-The whole suite runs headless and writes a JUnit-style report:
+The full suite runs headless and writes a JUnit-style report:
 
 ```shell
 mkdir -p build/gametest/run && echo "eula=true" > build/gametest/run/eula.txt
 ./gradlew runGameTestServer
 ```
 
-It currently executes **426 game tests across 57 test classes** (424 passing; two are intermittently flaky under
-concurrent batches). `build/gametest/gametest.xml` is the authoritative result — the console only prints
-assertion failures. If a previous run crashed, delete `build/gametest/run/world` first, or the stale
-`session.lock` makes the next run fail to start.
+`build/gametest/gametest.xml` is the authoritative result — the console only prints assertion failures, so
+counting from it will under-report. If a previous run crashed, delete `build/gametest/run/world` first;
+the leftover `session.lock` otherwise makes the next run fail to start.
 
-### Notes for restricted environments
+### Restricted environments
 
 On Windows hosts where Gradle cannot fork its own build JVM (the named pipe is denied and Gradle reports
-`CreatePipe error=5`), use the bundled `tools/gradle-en.cmd`, which launches Gradle in-process:
+`CreatePipe error=5`), use the bundled launcher, which runs Gradle in-process:
 
 ```shell
 cmd /c "tools\gradle-en.cmd build -x test -x portComponentTest"
 ```
 
-For more information, see [Release](./release.md) and the port notes in
-[`docs/HANDOVER.md`](./docs/HANDOVER.md) (Chinese).
+## What the port had to rebuild
+
+Both loaders expose different APIs, so these layers are Fabric-specific implementations of IC2R's behaviour.
+Everything else in `src/main/java/ic2/**` is shared with upstream.
+
+- **Platform layer** — `ic2/fabric/Ic2Fabric` and `Ic2FabricClient` replace the NeoForge `FmlMod` and
+  `ClientModEventHandlerForge`, reproducing NeoForge's registry initialization order explicitly.
+  `FabricEnvProxy` replaces `EnvProxyForge`.
+- **Events** — `NeoForge.EVENT_BUS` is replaced by IC2's own `Ic2EventBus`. Where Fabric offers no callback at
+  all, real mixins are used: fog rendering, sound replacement, item attribute modifiers, living-entity hooks,
+  and `onDroppedByPlayer`.
+- **Fluids** — vanilla 1.21.1 has neither `FluidType` nor `FlowingFluid.Properties` (both are NeoForge
+  patches), so each IC2 fluid is backed by a vanilla `FlowingFluid` pairing with `FluidVariantAttributes`.
+  Unit conversion is exact: 1 mB = 81 droplets.
+- **Rendering** — Fabric removed custom JSON model loaders, so the 388 `"loader": "ic2:*"` definitions are
+  taken over by a `PreparableModelLoadingPlugin`, and `BakedQuad`s are replayed into Indigo's `QuadEmitter`.
+- **Data** — NeoForge-only biome modifiers and the global loot modifier are reproduced through
+  `fabric-biome-api-v1` and `LootTableEvents.MODIFY`.
+
+The superseded NeoForge adapters are kept verbatim under `src/neoforge-reference/` for reference. They are not
+compiled and are not shipped.
+
+## Credits and licensing
+
+IC2R is built by the IC2R team on top of IC2 by the **IC2 Dev Team**. Upstream describes its code as obtained
+by decompiling the official `2.9.40-ex119` build, with missing functionality migrated from `2.8.222-ex112`.
+Neither the IC2R team nor this port owns the copyright to IC2's code or assets.
+
+**This port claims no authorship of the mod's content.** The gameplay, values, recipes and assets are IC2R's;
+what this repository contributes is the Fabric platform layer and the port maintenance around it. The
+NeoForge-to-Fabric work here is likewise derivative of upstream's structure and does not relicense it.
+
+This repository is distributed under **AGPL-3.0** (see [LICENSE](./LICENSE)), which covers the original
+contributions made here. It cannot determine the licensing of the project as a whole, because the underlying
+IC2 code and assets remain the property of their original authors. Because of that, no permission to use this
+mod on commercial servers can be granted from this repository — that is a right held by the original authors,
+and any such statement made here would have no effect on the parts they own.
+
+If you redistribute this mod or include it in a modpack, you must credit IC2 and IC2R, keep the descriptions
+and links they designate — `https://industrial-craft.net/` and `https://forum.industrial-craft.net/` — and
+preserve the licence notices above.
+
+## Reporting problems
+
+Issues with **gameplay, balance, recipes or assets** belong upstream at
+[neo-industrial-mc/IC2R](https://github.com/neo-industrial-mc/IC2R) — that code is shared, and a fix there
+reaches every platform.
+
+Issues that are **Fabric-specific** belong here: crashes on startup, mixin failures, rendering that differs
+from the NeoForge build, Fabric API incompatibilities, or anything that only reproduces on Fabric. Include
+your Fabric Loader and Fabric API versions, the full log, and a crash report if there is one.
